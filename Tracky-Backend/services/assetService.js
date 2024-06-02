@@ -1,20 +1,51 @@
 const admin = require('firebase-admin');
 const { CustomError } = require('../exceptions/customError');
+const crypto = require('crypto');
+const QRCode = require('qrcode');
+
+const generateQRCode = async (text) => {
+    try {
+        const qrCodeDataURL = await QRCode.toDataURL(text);
+        return qrCodeDataURL;
+    } catch (err) {
+        console.error("Failed to generate QR code:", err);
+        throw new CustomError("Failed to generate QR code", 500);
+    }
+};
 
 const addAsset = async (req, res) => {
-    const { name, description, depreciation, image, purchaseDate, price } = req.body;
+    const { name, description, depreciation, image, purchaseDate, originalPrice, tracker_id } = req.body;
+
+    const mobileAssetRef = admin.database().ref(`mobile-assets/${tracker_id}`);
+    const mobileAssetSnapshot = await mobileAssetRef.once('value');
+    if (!mobileAssetSnapshot.exists()) {
+        return res.status(400).json({ error: "Invalid tracker_id. The specified tracker_id does not exist." });
+    }
+
+    const depreciationRate = parseFloat(depreciation) / 100;
+    const currentDate = new Date();
+    const purchaseDateObject = new Date(purchaseDate);
+    const years = (currentDate - purchaseDateObject) / (1000 * 60 * 60 * 24 * 365.25);
+    const priceAfterDepreciation = originalPrice * Math.pow((1 - depreciationRate), years);
+
     try {
+        const qrCode = await generateQRCode(name);
+
         const newAsset = {
             name,
             description,
-            depreciation,
+            depreciationRate,
             image,
-            purchaseDate: new Date(purchaseDate).toISOString(),
-            price,
+            purchaseDate: purchaseDateObject.toISOString(),
+            originalPrice,
+            priceAfterDepreciation,
+            tracker_id, // Assign tracker_id to the asset
             createdBy: req.user.uid,
             createdAt: admin.database.ServerValue.TIMESTAMP,
-            approved: false // Initially not approved
+            approved: false,
+            qrCode
         };
+
         const assetRef = admin.database().ref('assets').push();
         await assetRef.set(newAsset);
         res.json({ message: "Asset added successfully", id: assetRef.key });
@@ -44,13 +75,13 @@ const listAssets = async (req, res) => {
 };
 
 const getAsset = async (req, res) => {
-    const { assetId } = req.params;
+    const { tracker_id } = req.params;
     try {
-        const snapshot = await admin.database().ref(`assets/${assetId}`).once('value');
+        const snapshot = await admin.database().ref(`assets/${tracker_id}`).once('value');
         if (!snapshot.exists()) {
             throw new CustomError("Asset not found", 404);
         }
-        res.json({ id: assetId, ...snapshot.val() });
+        res.json({ id: tracker_id, ...snapshot.val() });
     } catch (error) {
         console.error("Error retrieving asset:", error);
         res.status(error.statusCode || 500).json({ error: error.message });
@@ -58,22 +89,32 @@ const getAsset = async (req, res) => {
 };
 
 const updateAsset = async (req, res) => {
-    const { assetId } = req.params;
+    const { tracker_id } = req.params;
     const updates = req.body;
     try {
+        const snapshot = await admin.database().ref(`assets/${tracker_id}`).once('value');
+        if (!snapshot.exists()) {
+            throw new CustomError("Asset not found", 404);
+        }
+
+        const asset = snapshot.val();
+        if (asset.approved) {
+            throw new CustomError("Approved asset cannot be edited directly", 403);
+        }
+
         updates.updatedAt = admin.database.ServerValue.TIMESTAMP;
-        await admin.database().ref(`assets/${assetId}`).update(updates);
-        res.json({ message: "Asset updated successfully" });
+        await admin.database().ref(`assets/${tracker_id}`).update(updates);
+        res.json({ id: tracker_id, ...updates });
     } catch (error) {
         console.error("Error updating asset:", error);
-        res.status(500).json({ error: "Error updating asset" });
+        res.status(error.statusCode || 500).json({ error: error.message });
     }
 };
 
 const deleteAsset = async (req, res) => {
-    const { assetId } = req.params;
+    const { tracker_id } = req.params;
     try {
-        await admin.database().ref(`assets/${assetId}`).remove();
+        await admin.database().ref(`assets/${tracker_id}`).remove();
         res.json({ message: "Asset deleted successfully" });
     } catch (error) {
         console.error("Error deleting asset:", error);
@@ -81,19 +122,43 @@ const deleteAsset = async (req, res) => {
     }
 };
 
-const approveAsset = async (req, res) => {
-    const { assetId } = req.params;
+const requestApproval = async (req, res) => {
+    const { tracker_id } = req.params;
     try {
-        await admin.database().ref(`assets/${assetId}`).update({
-            approved: true,
-            approvedAt: admin.database.ServerValue.TIMESTAMP,
-            approvedBy: req.user.uid
+        await admin.database().ref(`assets/${tracker_id}`).update({
+            approvalRequested: true,
+            requestedAt: admin.database.ServerValue.TIMESTAMP,
+            requestedBy: req.user.uid
         });
-        res.json({ message: "Asset approved successfully" });
+        res.json({ message: "Approval requested successfully" });
     } catch (error) {
-        console.error("Error approving asset:", error);
-        res.status(500).json({ error: "Error approving asset" });
+        console.error("Failed to request approval:", error);
+        res.status(500).json({ error: "Failed to request approval" });
     }
 };
 
-module.exports = { addAsset, listAssets, getAsset, updateAsset, deleteAsset, approveAsset };
+const approveAsset = async (req, res) => {
+    const { tracker_id } = req.params;
+    try {
+        await admin.database().ref(`assets/${tracker_id}`).update({
+            approved: true,
+            approvedAt: admin.database.ServerValue.TIMESTAMP,
+            approvedBy: req.user.uid,
+            approvalRequested: false
+        });
+        res.json({ message: "Asset approved successfully" });
+    } catch (error) {
+        console.error("Failed to approve asset:", error);
+        res.status(500).json({ error: "Failed to approve asset" });
+    }
+};
+
+module.exports = {
+    addAsset,
+    listAssets,
+    getAsset,
+    updateAsset,
+    deleteAsset,
+    requestApproval,
+    approveAsset
+};

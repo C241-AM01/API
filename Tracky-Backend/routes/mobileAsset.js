@@ -1,12 +1,14 @@
 const express = require('express');
 const router = express.Router();
-const { createMobileAsset, getMobileAsset, updateMobileAsset, deleteMobileAsset, queryMobileAssets } = require('../services/mobileAssetService');
+const mobileAssetService = require('../services/mobileAssetService');
 const { authenticateJWT, authorizeRole } = require('../middleware/authMiddleware');
 
-router.post('/', authenticateJWT, authorizeRole('PIC'), createMobileAsset);
-router.get('/', authenticateJWT, authorizeRole('User'), queryMobileAssets);
-router.get('/:assetId', authenticateJWT, getMobileAsset);
-router.put('/:assetId', authenticateJWT, authorizeRole('Admin'), updateMobileAsset);
-router.delete('/:assetId', authenticateJWT, authorizeRole('Admin'), deleteMobileAsset);
+router.post('/', authenticateJWT, authorizeRole(['Admin']), mobileAssetService.createMobileAsset);
+router.get('/', authenticateJWT, authorizeRole(['User', 'Admin', 'PIC']), mobileAssetService.queryMobileAssets);
+router.get('/:tracker_id', authenticateJWT, authorizeRole(['User', 'Admin', 'PIC']), mobileAssetService.getMobileAsset);
+router.put('/:tracker_id', authenticateJWT, authorizeRole(['Admin']), mobileAssetService.updateMobileAsset);
+router.delete('/:tracker_id', authenticateJWT, authorizeRole(['Admin']), mobileAssetService.deleteMobileAsset);
+router.put('/request-approval/:tracker_id', authenticateJWT, authorizeRole(['PIC']), mobileAssetService.requestApproval);
+router.put('/approve/:tracker_id', authenticateJWT, authorizeRole(['Admin']), mobileAssetService.approveMobileAsset);
 
 module.exports = router;
