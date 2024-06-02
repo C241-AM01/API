@@ -16,9 +16,9 @@ const generateQRCode = async (text) => {
 const addAsset = async (req, res) => {
     const { name, description, depreciation, image, purchaseDate, originalPrice, tracker_id } = req.body;
 
-    const mobileAssetRef = admin.database().ref(`mobile-assets/${tracker_id}`);
-    const mobileAssetSnapshot = await mobileAssetRef.once('value');
-    if (!mobileAssetSnapshot.exists()) {
+    const trackerRef = admin.database().ref(`tracker/${tracker_id}`);
+    const trackerSnapshot = await trackerRef.once('value');
+    if (!trackerSnapshot.exists()) {
         return res.status(400).json({ error: "Invalid tracker_id. The specified tracker_id does not exist." });
     }
 
