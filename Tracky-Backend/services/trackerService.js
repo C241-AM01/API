@@ -4,7 +4,6 @@ const { CustomError } = require('../exceptions/customError');
 const createTracker = async (req, res) => {
     const { tracker_id, name, latitude, longitude, timestamp, vehicleType, plateNumber } = req.body;
 
-    // Ensure tracker_id is provided
     if (!tracker_id) {
         return res.status(400).json({ error: "tracker_id is required" });
     }
@@ -56,18 +55,27 @@ const updateTracker = async (req, res) => {
         }
 
         const tracker = snapshot.val();
-        if (tracker.approved) {
-            throw new CustomError("Approved tracker asset cannot be edited directly", 403);
+        if (tracker.approved && !tracker.editApproved) {
+            throw new CustomError("Approved tracker cannot be edited without approval", 403);
         }
 
         updates.updatedAt = admin.database.ServerValue.TIMESTAMP;
         await admin.database().ref(`tracker/${tracker_id}`).update(updates);
         res.json({ id: tracker_id, ...updates });
+
+        if (tracker.editApproved) {
+            await admin.database().ref(`tracker/${tracker_id}`).update({
+                editApproved: false,
+                editApprovedAt: null,
+                editApprovedBy: null
+            });
+        }
     } catch (error) {
         console.error("Failed to update tracker asset:", error);
         res.status(error.statusCode || 500).json({ error: error.message });
     }
 };
+
 
 const deleteTracker = async (req, res) => {
     const { tracker_id } = req.params;
@@ -99,36 +107,67 @@ const queryTracker = async (req, res) => {
     }
 };
 
-const requestApproval = async (req, res) => {
+const requestEdit = async (req, res) => {
     const { tracker_id } = req.params;
     try {
         await admin.database().ref(`tracker/${tracker_id}`).update({
-            approvalRequested: true,
-            requestedAt: admin.database.ServerValue.TIMESTAMP,
-            requestedBy: req.user.uid
+            editRequested: true,
+            editRequestedAt: admin.database.ServerValue.TIMESTAMP,
+            editRequestedBy: req.user.uid
         });
-        res.json({ message: "Approval requested successfully" });
+        res.json({ message: "Edit request submitted successfully" });
     } catch (error) {
-        console.error("Failed to request approval:", error);
-        res.status(500).json({ error: "Failed to request approval" });
+        console.error("Failed to request edit:", error);
+        res.status(500).json({ error: "Failed to request edit" });
     }
 };
 
-const approveTracker = async (req, res) => {
+const approveEdit = async (req, res) => {
     const { tracker_id } = req.params;
     try {
         await admin.database().ref(`tracker/${tracker_id}`).update({
-            approved: true,
-            approvedAt: admin.database.ServerValue.TIMESTAMP,
-            approvedBy: req.user.uid,
-            approvalRequested: false
+            editApproved: true,
+            editApprovedAt: admin.database.ServerValue.TIMESTAMP,
+            editApprovedBy: req.user.uid,
+            editRequested: false
         });
-        res.json({ message: "Tracker approved successfully" });
+        res.json({ message: "Edit request approved successfully" });
     } catch (error) {
-        console.error("Failed to approve tracker:", error);
-        res.status(500).json({ error: "Failed to approve tracker" });
+        console.error("Failed to approve edit:", error);
+        res.status(500).json({ error: "Failed to approve edit" });
     }
 };
+
+const updateLocation = async (req, res) => {
+    const { tracker_id } = req.params;
+    const { latitude, longitude } = req.body;
+
+    if (latitude === undefined || longitude === undefined) {
+        return res.status(400).json({ error: "latitude and longitude are required" });
+    }
+
+    try {
+        const snapshot = await admin.database().ref(`tracker/${tracker_id}`).once('value');
+        if (!snapshot.exists()) {
+            throw new CustomError("Tracker not found", 404);
+        }
+
+        const updates = {
+            latitude,
+            longitude,
+            timestamp: admin.database.ServerValue.TIMESTAMP,
+            updatedAt: admin.database.ServerValue.TIMESTAMP
+        };
+
+        await admin.database().ref(`tracker/${tracker_id}`).update(updates);
+        res.json({ id: tracker_id, ...updates });
+    } catch (error) {
+        console.error("Failed to update tracker location:", error);
+        res.status(error.statusCode || 500).json({ error: error.message });
+    }
+};
+
+
 
 module.exports = {
     createTracker: createTracker,
@@ -136,6 +175,7 @@ module.exports = {
     updateTracker,
     deleteTracker,
     queryTracker,
-    requestApproval,
-    approveTracker
+    requestEdit,
+    approveEdit,
+    updateLocation
 };

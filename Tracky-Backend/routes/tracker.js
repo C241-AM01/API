@@ -8,7 +8,9 @@ router.get('/', authenticateJWT, authorizeRole(['User', 'Admin', 'PIC']), tracke
 router.get('/:tracker_id', authenticateJWT, authorizeRole(['User', 'Admin', 'PIC']), trackerService.getTracker);
 router.put('/:tracker_id', authenticateJWT, authorizeRole(['Admin']), trackerService.updateTracker);
 router.delete('/:tracker_id', authenticateJWT, authorizeRole(['Admin']), trackerService.deleteTracker);
-router.put('/request-approval/:tracker_id', authenticateJWT, authorizeRole(['PIC']), trackerService.requestApproval);
-router.put('/approve/:tracker_id', authenticateJWT, authorizeRole(['Admin']), trackerService.approveTracker);
+router.put('/request-edit/:tracker_id', authenticateJWT, authorizeRole(['PIC']), trackerService.requestEdit);
+router.put('/approve-edit/:tracker_id', authenticateJWT, authorizeRole(['Admin']), trackerService.approveEdit);
+router.put('/update-location/:tracker_id', authenticateJWT, authorizeRole(['Admin']), trackerService.updateLocation); 
+
 
 module.exports = router;

@@ -98,18 +98,27 @@ const updateAsset = async (req, res) => {
         }
 
         const asset = snapshot.val();
-        if (asset.approved) {
-            throw new CustomError("Approved asset cannot be edited directly", 403);
+        if (asset.approved && !asset.editApproved) {
+            throw new CustomError("Approved asset cannot be edited without approval", 403);
         }
 
         updates.updatedAt = admin.database.ServerValue.TIMESTAMP;
         await admin.database().ref(`assets/${tracker_id}`).update(updates);
         res.json({ id: tracker_id, ...updates });
+
+        if (asset.editApproved) {
+            await admin.database().ref(`assets/${tracker_id}`).update({
+                editApproved: false,
+                editApprovedAt: null,
+                editApprovedBy: null
+            });
+        }
     } catch (error) {
         console.error("Error updating asset:", error);
         res.status(error.statusCode || 500).json({ error: error.message });
     }
 };
+
 
 const deleteAsset = async (req, res) => {
     const { tracker_id } = req.params;
@@ -122,36 +131,37 @@ const deleteAsset = async (req, res) => {
     }
 };
 
-const requestApproval = async (req, res) => {
+const requestEdit = async (req, res) => {
     const { tracker_id } = req.params;
     try {
         await admin.database().ref(`assets/${tracker_id}`).update({
-            approvalRequested: true,
-            requestedAt: admin.database.ServerValue.TIMESTAMP,
-            requestedBy: req.user.uid
+            editRequested: true,
+            editRequestedAt: admin.database.ServerValue.TIMESTAMP,
+            editRequestedBy: req.user.uid
         });
-        res.json({ message: "Approval requested successfully" });
+        res.json({ message: "Edit request submitted successfully" });
     } catch (error) {
-        console.error("Failed to request approval:", error);
-        res.status(500).json({ error: "Failed to request approval" });
+        console.error("Failed to request edit:", error);
+        res.status(500).json({ error: "Failed to request edit" });
     }
 };
 
-const approveAsset = async (req, res) => {
+const approveEdit = async (req, res) => {
     const { tracker_id } = req.params;
     try {
         await admin.database().ref(`assets/${tracker_id}`).update({
-            approved: true,
-            approvedAt: admin.database.ServerValue.TIMESTAMP,
-            approvedBy: req.user.uid,
-            approvalRequested: false
+            editApproved: true,
+            editApprovedAt: admin.database.ServerValue.TIMESTAMP,
+            editApprovedBy: req.user.uid,
+            editRequested: false
         });
-        res.json({ message: "Asset approved successfully" });
+        res.json({ message: "Edit request approved successfully" });
     } catch (error) {
-        console.error("Failed to approve asset:", error);
-        res.status(500).json({ error: "Failed to approve asset" });
+        console.error("Failed to approve edit:", error);
+        res.status(500).json({ error: "Failed to approve edit" });
     }
 };
+
 
 module.exports = {
     addAsset,
@@ -159,6 +169,6 @@ module.exports = {
     getAsset,
     updateAsset,
     deleteAsset,
-    requestApproval,
-    approveAsset
+    requestEdit,
+    approveEdit
 };
