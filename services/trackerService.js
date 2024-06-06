@@ -178,22 +178,22 @@ const deleteTracker = async (req, res) => {
 };
 
 const requestEdit = async (req, res) => {
-    const { tracker_id } = req.params;
+    const { asset_id } = req.params;
 
     try {
-        const snapshot = await admin.database().ref(`tracker/${tracker_id}`).once('value');
+        const snapshot = await admin.database().ref(`tracker/${asset_id}`).once('value');
         if (!snapshot.exists()) {
-            throw new CustomError("Tracker not found", 404);
+            throw new CustomError("Asset not found", 404);
         }
 
-        const tracker = snapshot.val();
+        const asset = snapshot.val();
 
         // Ensure only PIC can request edit access
-        if (req.user.role !== 'Pic') {
+        if (req.user.role.toLowerCase() !== 'pic') {  // Normalize the case for comparison
             return res.status(403).json({ error: "Only PIC can request edit access" });
         }
 
-        await admin.database().ref(`tracker/${tracker_id}`).update({
+        await admin.database().ref(`tracker/${asset_id}`).update({
             editRequested: true,
             editRequestedBy: req.user.uid,
             editRequestedAt: admin.database.ServerValue.TIMESTAMP,
@@ -207,22 +207,22 @@ const requestEdit = async (req, res) => {
 };
 
 const approveEdit = async (req, res) => {
-    const { tracker_id } = req.params;
+    const { asset_id } = req.params;
 
     try {
-        const snapshot = await admin.database().ref(`tracker/${tracker_id}`).once('value');
+        const snapshot = await admin.database().ref(`tracker/${asset_id}`).once('value');
         if (!snapshot.exists()) {
-            throw new CustomError("Tracker not found", 404);
+            throw new CustomError("Asset not found", 404);
         }
 
-        const tracker = snapshot.val();
+        const asset = snapshot.val();
 
         // Ensure only admin can approve edit access
-        if (req.user.role !== 'Admin') {
+        if (req.user.role.toLowerCase() !== 'admin') {  // Normalize the case for comparison
             return res.status(403).json({ error: "Only admin can approve edit access" });
         }
 
-        await admin.database().ref(`tracker/${tracker_id}`).update({
+        await admin.database().ref(`tracker/${asset_id}`).update({
             editApproved: true,
             editApprovedBy: req.user.uid,
             editApprovedAt: admin.database.ServerValue.TIMESTAMP,

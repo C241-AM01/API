@@ -6,12 +6,12 @@ const multer = require('multer');
 
 const upload = multer({ dest: 'uploads/' });
 
-router.post('/', authenticateJWT, authorizeRole(['Admin']), upload.single('image'), assetService.addAsset);
-router.get('/', authenticateJWT, authorizeRole(['User', 'Admin', 'PIC']), assetService.listAssets);
-router.get('/:asset_id', authenticateJWT, authorizeRole(['User', 'Admin', 'PIC']), assetService.getAsset);
-router.put('/:asset_id', authenticateJWT, authorizeRole(['Admin']), upload.single('image'), assetService.updateAsset);
-router.delete('/:asset_id', authenticateJWT, authorizeRole(['Admin']), assetService.deleteAsset);
-router.put('/request-edit/:asset_id', authenticateJWT, authorizeRole(['PIC']), assetService.requestEdit);
-router.put('/approve-edit/:asset_id', authenticateJWT, authorizeRole(['Admin']), assetService.approveEdit);
+router.post('/', authenticateJWT, authorizeRole(['admin']), upload.single('image'), assetService.addAsset);
+router.get('/', authenticateJWT, authorizeRole(['user', 'Admin', 'PIC']), assetService.listAssets);
+router.get('/:asset_id', authenticateJWT, authorizeRole(['user', 'admin', 'pic']), assetService.getAsset);
+router.put('/:asset_id', authenticateJWT, authorizeRole(['admin']), upload.single('image'), assetService.updateAsset);
+router.delete('/:asset_id', authenticateJWT, authorizeRole(['admin']), assetService.deleteAsset);
+router.put('/request-edit/:asset_id', authenticateJWT, authorizeRole(['pic']), assetService.requestEdit);
+router.put('/approve-edit/:asset_id', authenticateJWT, authorizeRole(['admin']), assetService.approveEdit);
 
 module.exports = router;

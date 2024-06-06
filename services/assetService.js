@@ -195,8 +195,8 @@ const updateAsset = async (req, res) => {
         }
 
         const asset = snapshot.val();
-        const isAdmin = req.user.role === 'Admin';
-        const isPIC = req.user.role === 'PIC';
+        const isAdmin = req.user.role === 'admin';
+        const isPIC = req.user.role === 'pic';
 
         // Check if user is allowed to update
         if (!isAdmin && !(isPIC && asset.editApproved)) {
@@ -282,7 +282,7 @@ const requestEdit = async (req, res) => {
         const asset = snapshot.val();
 
         // Ensure only PIC can request edit access
-        if (req.user.role !== 'PIC') {
+        if (req.user.role.toLowerCase() !== 'pic') {  // Normalize the case for comparison
             return res.status(403).json({ error: "Only PIC can request edit access" });
         }
 
@@ -311,7 +311,7 @@ const approveEdit = async (req, res) => {
         const asset = snapshot.val();
 
         // Ensure only admin can approve edit access
-        if (req.user.role !== 'admin') {
+        if (req.user.role.toLowerCase() !== 'admin') {  // Normalize the case for comparison
             return res.status(403).json({ error: "Only admin can approve edit access" });
         }
 
@@ -330,6 +330,7 @@ const approveEdit = async (req, res) => {
         res.status(500).json({ error: "Error approving edit access" });
     }
 };
+
 
 module.exports = {
     addAsset,
