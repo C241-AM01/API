@@ -117,7 +117,7 @@ const getTracker = async (req, res) => {
 const updateTracker = async (req, res) => {
     const { tracker_id } = req.params;
     const updates = req.body;
-    const { image } = req.file || {};
+
     try {
         const snapshot = await admin.database().ref(`tracker/${tracker_id}`).once('value');
         if (!snapshot.exists()) {
@@ -125,54 +125,32 @@ const updateTracker = async (req, res) => {
         }
 
         const tracker = snapshot.val();
-        if (tracker.approved && !tracker.editApproved) {
-            throw new CustomError("Approved tracker cannot be edited without approval", 403);
+        const isAdmin = req.user.role === 'Admin';
+        const isPIC = req.user.role === 'Pic';
+
+        // Check if user is allowed to update
+        if (!isAdmin && !(isPIC && tracker.editApproved)) {
+            return res.status(403).json({ error: "You do not have permission to edit this tracker" });
         }
 
-        if (image) {
-            const fileExtension = path.extname(image.originalname);
-            const fileName = `${tracker_id}${fileExtension}`;
-            const filePath = path.join(__dirname, '..', 'uploads', image.filename);
-            const destination = `tracked_vehicle/${fileName}`;
-            
-            console.log(`Uploading file to storage: ${filePath} to ${destination}`);
-            const uploadedImageURL = await uploadFileToStorage(filePath, destination);
-            console.log(`Uploaded file URL: ${uploadedImageURL}`);
-            fs.unlinkSync(filePath);
-            updates.vehicleImage = uploadedImageURL;
-
-            if (tracker.vehicleImage) {
-                await deleteFileFromStorage(tracker.vehicleImage);
-            }
-        }
-
-        if (updates.longitude != null && updates.latitude != null && updates.timestamp) {
-            const locationHistory = snapshot.val().locationHistory || {};
-            locationHistory[updates.timestamp] = [updates.longitude, updates.latitude];
-            updates.locationHistory = locationHistory;
-        }
-
-        if (updates.assignedAsset && updates.assignedAsset !== tracker.assignedAsset) {
-            if (tracker.assignedAsset) {
-                await admin.database().ref(`assets/${tracker.assignedAsset}`).update({ trackerId: null });
-            }
-            await admin.database().ref(`assets/${updates.assignedAsset}`).update({ trackerId: tracker_id });
+        // Only allow one edit request at a time for PIC
+        if (isPIC && !tracker.editApproved) {
+            return res.status(403).json({ error: "You need admin approval to edit this tracker" });
         }
 
         updates.updatedAt = admin.database.ServerValue.TIMESTAMP;
-        await admin.database().ref(`tracker/${tracker_id}`).update(updates);
 
+        // Reset edit approval status after update
         if (tracker.editApproved) {
-            await admin.database().ref(`tracker/${tracker_id}`).update({
-                editApproved: false,
-                editApprovedAt: null,
-                editApprovedBy: null
-            });
+            updates.editApproved = false;
+            updates.editApprovedAt = null;
+            updates.editApprovedBy = null;
         }
 
+        await admin.database().ref(`tracker/${tracker_id}`).update(updates);
         res.json({ id: tracker_id, ...updates });
     } catch (error) {
-        console.error("Failed to update tracker asset:", error);
+        console.error("Error updating tracker:", error);
         res.status(error.statusCode || 500).json({ error: error.message });
     }
 };
@@ -201,32 +179,62 @@ const deleteTracker = async (req, res) => {
 
 const requestEdit = async (req, res) => {
     const { tracker_id } = req.params;
+
     try {
+        const snapshot = await admin.database().ref(`tracker/${tracker_id}`).once('value');
+        if (!snapshot.exists()) {
+            throw new CustomError("Tracker not found", 404);
+        }
+
+        const tracker = snapshot.val();
+
+        // Ensure only PIC can request edit access
+        if (req.user.role !== 'Pic') {
+            return res.status(403).json({ error: "Only PIC can request edit access" });
+        }
+
         await admin.database().ref(`tracker/${tracker_id}`).update({
             editRequested: true,
+            editRequestedBy: req.user.uid,
             editRequestedAt: admin.database.ServerValue.TIMESTAMP,
-            editRequestedBy: req.user.uid
         });
-        res.json({ message: "Edit request submitted successfully" });
+
+        res.json({ message: "Edit access requested successfully" });
     } catch (error) {
-        console.error("Failed to request edit:", error);
-        res.status(500).json({ error: "Failed to request edit" });
+        console.error("Error requesting edit access:", error);
+        res.status(500).json({ error: "Error requesting edit access" });
     }
 };
 
 const approveEdit = async (req, res) => {
     const { tracker_id } = req.params;
+
     try {
+        const snapshot = await admin.database().ref(`tracker/${tracker_id}`).once('value');
+        if (!snapshot.exists()) {
+            throw new CustomError("Tracker not found", 404);
+        }
+
+        const tracker = snapshot.val();
+
+        // Ensure only admin can approve edit access
+        if (req.user.role !== 'Admin') {
+            return res.status(403).json({ error: "Only admin can approve edit access" });
+        }
+
         await admin.database().ref(`tracker/${tracker_id}`).update({
             editApproved: true,
-            editApprovedAt: admin.database.ServerValue.TIMESTAMP,
             editApprovedBy: req.user.uid,
-            editRequested: false
+            editApprovedAt: admin.database.ServerValue.TIMESTAMP,
+            editRequested: false,
+            editRequestedBy: null,
+            editRequestedAt: null,
         });
-        res.json({ message: "Edit request approved successfully" });
+
+        res.json({ message: "Edit access approved successfully" });
     } catch (error) {
-        console.error("Failed to approve edit:", error);
-        res.status(500).json({ error: "Failed to approve edit" });
+        console.error("Error approving edit access:", error);
+        res.status(500).json({ error: "Error approving edit access" });
     }
 };
 

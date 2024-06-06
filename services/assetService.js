@@ -5,6 +5,10 @@ const QRCode = require('qrcode');
 const bucket = admin.storage().bucket();
 
 const generateQRCode = async (text) => {
+    if (!text || typeof text !== 'string') {
+        throw new CustomError("Invalid input for QR code generation", 400);
+    }
+
     try {
         const qrCodeDataURL = await QRCode.toDataURL(text);
         return qrCodeDataURL;
@@ -82,6 +86,10 @@ const addAsset = async (req, res) => {
     const { name, description, originalPrice, depreciationRate, depreciationValue, purchaseDate, trackerId } = req.body;
     const image = req.file;
 
+    if (!name || typeof name !== 'string') {
+        return res.status(400).json({ error: "Invalid asset name" });
+    }
+
     const trackerRef = admin.database().ref(`tracker/${trackerId}`);
     const trackerSnapshot = await trackerRef.once('value');
     if (!trackerSnapshot.exists()) {
@@ -134,6 +142,10 @@ const listAssets = async (req, res) => {
         });
 
         for (let asset of assets) {
+            if (!asset.name || typeof asset.name !== 'string') {
+                console.error("Invalid asset name:", asset.name);
+                continue; // Skip assets with invalid names
+            }
             const qrCode = await generateQRCode(asset.name);
             asset.qrCode = qrCode;
             if (asset.qrCodeURL) {
@@ -147,6 +159,7 @@ const listAssets = async (req, res) => {
         res.status(500).json({ error: "Error retrieving assets" });
     }
 };
+
 
 const getAsset = async (req, res) => {
     const { asset_id } = req.params;
@@ -181,6 +194,20 @@ const updateAsset = async (req, res) => {
             throw new CustomError("Asset not found", 404);
         }
 
+        const asset = snapshot.val();
+        const isAdmin = req.user.role === 'Admin';
+        const isPIC = req.user.role === 'PIC';
+
+        // Check if user is allowed to update
+        if (!isAdmin && !(isPIC && asset.editApproved)) {
+            return res.status(403).json({ error: "You do not have permission to edit this asset" });
+        }
+
+        // Only allow one edit request at a time for PIC
+        if (isPIC && !asset.editApproved) {
+            return res.status(403).json({ error: "You need admin approval to edit this asset" });
+        }
+
         const oldImageURL = snapshot.val().imageURL;
 
         if (image) {
@@ -200,6 +227,13 @@ const updateAsset = async (req, res) => {
         );
         updates.currentPrice = currentPrice;
         updates.updatedAt = admin.database.ServerValue.TIMESTAMP;
+
+        // Reset edit approval status after update
+        if (asset.editApproved) {
+            updates.editApproved = false;
+            updates.editApprovedAt = null;
+            updates.editApprovedBy = null;
+        }
 
         await admin.database().ref(`assets/${asset_id}`).update(updates);
         res.json({ id: asset_id, ...updates });
@@ -237,33 +271,63 @@ const deleteAsset = async (req, res) => {
 };
 
 const requestEdit = async (req, res) => {
-    const { tracker_id } = req.params;
+    const { asset_id } = req.params;
+
     try {
-        await admin.database().ref(`assets/${tracker_id}`).update({
+        const snapshot = await admin.database().ref(`assets/${asset_id}`).once('value');
+        if (!snapshot.exists()) {
+            throw new CustomError("Asset not found", 404);
+        }
+
+        const asset = snapshot.val();
+
+        // Ensure only PIC can request edit access
+        if (req.user.role !== 'PIC') {
+            return res.status(403).json({ error: "Only PIC can request edit access" });
+        }
+
+        await admin.database().ref(`assets/${asset_id}`).update({
             editRequested: true,
+            editRequestedBy: req.user.uid,
             editRequestedAt: admin.database.ServerValue.TIMESTAMP,
-            editRequestedBy: req.user.uid
         });
-        res.json({ message: "Edit request submitted successfully" });
+
+        res.json({ message: "Edit access requested successfully" });
     } catch (error) {
-        console.error("Failed to request edit:", error);
-        res.status(500).json({ error: "Failed to request edit" });
+        console.error("Error requesting edit access:", error);
+        res.status(500).json({ error: "Error requesting edit access" });
     }
 };
 
 const approveEdit = async (req, res) => {
-    const { tracker_id } = req.params;
+    const { asset_id } = req.params;
+
     try {
-        await admin.database().ref(`assets/${tracker_id}`).update({
+        const snapshot = await admin.database().ref(`assets/${asset_id}`).once('value');
+        if (!snapshot.exists()) {
+            throw new CustomError("Asset not found", 404);
+        }
+
+        const asset = snapshot.val();
+
+        // Ensure only admin can approve edit access
+        if (req.user.role !== 'admin') {
+            return res.status(403).json({ error: "Only admin can approve edit access" });
+        }
+
+        await admin.database().ref(`assets/${asset_id}`).update({
             editApproved: true,
-            editApprovedAt: admin.database.ServerValue.TIMESTAMP,
             editApprovedBy: req.user.uid,
-            editRequested: false
+            editApprovedAt: admin.database.ServerValue.TIMESTAMP,
+            editRequested: false,
+            editRequestedBy: null,
+            editRequestedAt: null,
         });
-        res.json({ message: "Edit request approved successfully" });
+
+        res.json({ message: "Edit access approved successfully" });
     } catch (error) {
-        console.error("Failed to approve edit:", error);
-        res.status(500).json({ error: "Failed to approve edit" });
+        console.error("Error approving edit access:", error);
+        res.status(500).json({ error: "Error approving edit access" });
     }
 };
 
