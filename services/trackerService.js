@@ -1,35 +1,104 @@
 const admin = require('firebase-admin');
 const { CustomError } = require('../exceptions/customError');
+const path = require('path');
+const fs = require('fs');
+const multer = require('multer');
+
+const upload = multer({ dest: 'uploads/' });
+
+const bucket = admin.storage().bucket();
+
+const uploadFileToStorage = async (filePath, destination) => {
+    try {
+        await bucket.upload(filePath, {
+            destination,
+            metadata: {
+                cacheControl: 'public,max-age=31536000',
+            },
+        });
+        const file = bucket.file(destination);
+        const [url] = await file.getSignedUrl({
+            action: 'read',
+            expires: '03-09-2491',
+        });
+        return url;
+    } catch (error) {
+        console.error("Failed to upload file to Firebase Storage:", error);
+        throw new CustomError("Failed to upload file", 500);
+    }
+};
+
+const deleteFileFromStorage = async (url) => {
+    try {
+        const filePath = decodeURIComponent(url.split('/').pop());
+        const file = bucket.file(filePath);
+        await file.delete();
+        console.log(`Successfully deleted file: ${filePath}`);
+    } catch (error) {
+        console.error(`Failed to delete file: ${url}`, error);
+    }
+};
 
 const createTracker = async (req, res) => {
-    const { tracker_id, name, latitude, longitude, timestamp, vehicleType, plateNumber } = req.body;
+    const { tracker_id, name, latitude, longitude, timestamp, vehicleType, plateNum, description } = req.body;
 
-    if (!tracker_id) {
-        return res.status(400).json({ error: "tracker_id is required" });
+    if (!tracker_id || longitude == null || latitude == null || !timestamp) {
+        return res.status(400).json({ error: "tracker_id, longitude, latitude, and timestamp are required" });
     }
+
+    let uploadedImageURL = null;
+    if (req.file) {
+        const fileExtension = path.extname(req.file.originalname);
+        const fileName = `${tracker_id}${fileExtension}`;
+        const filePath = path.join(__dirname, '..', 'uploads', req.file.filename);
+        const destination = `tracked_vehicle/${fileName}`;
+
+        console.log(`Uploading file to storage: ${filePath} to ${destination}`);
+        uploadedImageURL = await uploadFileToStorage(filePath, destination);
+        console.log(`Uploaded file URL: ${uploadedImageURL}`);
+        fs.unlinkSync(filePath);
+    }
+
+    const locationHistory = {
+        [timestamp]: [longitude, latitude]
+    };
 
     try {
         const ref = admin.database().ref(`tracker/${tracker_id}`);
         await ref.set({
             tracker_id,
             name,
-            latitude,
-            longitude,
-            timestamp,
+            locationHistory,
+            description,
             vehicleType, 
-            plateNumber, 
+            plateNum,
+            image: uploadedImageURL,  // Include the uploaded image URL here
             createdAt: admin.database.ServerValue.TIMESTAMP,
             updatedAt: admin.database.ServerValue.TIMESTAMP,
-            approved: false, 
-            createdBy: req.user.uid,
+            approved: false,
+            createdBy: req.user.uid
         });
-        res.json({ tracker_id, name, latitude, longitude, timestamp, vehicleType, plateNumber });
+        res.json({ tracker_id, name, latitude, longitude, timestamp, vehicleType, plateNum, image: uploadedImageURL });
     } catch (error) {
         console.error("Failed to create tracker asset:", error);
         res.status(500).json({ error: "Failed to create tracker asset" });
     }
 };
 
+const listTrackers = async (req, res) => {
+    try {
+        const trackersRef = admin.database().ref('tracker');
+        const snapshot = await trackersRef.once('value');
+        const trackers = [];
+        snapshot.forEach((childSnapshot) => {
+            trackers.push({ id: childSnapshot.key, ...childSnapshot.val() });
+        });
+        res.json({ trackers });
+    } catch (error) {
+        console.error("Error retrieving trackers:", error);
+        res.status(500).json({ error: "Error retrieving trackers" });
+    }
+};
 
 const getTracker = async (req, res) => {
     const { tracker_id } = req.params;
@@ -48,6 +117,7 @@ const getTracker = async (req, res) => {
 const updateTracker = async (req, res) => {
     const { tracker_id } = req.params;
     const updates = req.body;
+    const { image } = req.file || {};
     try {
         const snapshot = await admin.database().ref(`tracker/${tracker_id}`).once('value');
         if (!snapshot.exists()) {
@@ -59,9 +129,38 @@ const updateTracker = async (req, res) => {
             throw new CustomError("Approved tracker cannot be edited without approval", 403);
         }
 
+        if (image) {
+            const fileExtension = path.extname(image.originalname);
+            const fileName = `${tracker_id}${fileExtension}`;
+            const filePath = path.join(__dirname, '..', 'uploads', image.filename);
+            const destination = `tracked_vehicle/${fileName}`;
+            
+            console.log(`Uploading file to storage: ${filePath} to ${destination}`);
+            const uploadedImageURL = await uploadFileToStorage(filePath, destination);
+            console.log(`Uploaded file URL: ${uploadedImageURL}`);
+            fs.unlinkSync(filePath);
+            updates.vehicleImage = uploadedImageURL;
+
+            if (tracker.vehicleImage) {
+                await deleteFileFromStorage(tracker.vehicleImage);
+            }
+        }
+
+        if (updates.longitude != null && updates.latitude != null && updates.timestamp) {
+            const locationHistory = snapshot.val().locationHistory || {};
+            locationHistory[updates.timestamp] = [updates.longitude, updates.latitude];
+            updates.locationHistory = locationHistory;
+        }
+
+        if (updates.assignedAsset && updates.assignedAsset !== tracker.assignedAsset) {
+            if (tracker.assignedAsset) {
+                await admin.database().ref(`assets/${tracker.assignedAsset}`).update({ trackerId: null });
+            }
+            await admin.database().ref(`assets/${updates.assignedAsset}`).update({ trackerId: tracker_id });
+        }
+
         updates.updatedAt = admin.database.ServerValue.TIMESTAMP;
         await admin.database().ref(`tracker/${tracker_id}`).update(updates);
-        res.json({ id: tracker_id, ...updates });
 
         if (tracker.editApproved) {
             await admin.database().ref(`tracker/${tracker_id}`).update({
@@ -70,40 +169,33 @@ const updateTracker = async (req, res) => {
                 editApprovedBy: null
             });
         }
+
+        res.json({ id: tracker_id, ...updates });
     } catch (error) {
         console.error("Failed to update tracker asset:", error);
         res.status(error.statusCode || 500).json({ error: error.message });
     }
 };
 
-
 const deleteTracker = async (req, res) => {
     const { tracker_id } = req.params;
     try {
+        const snapshot = await admin.database().ref(`tracker/${tracker_id}`).once('value');
+        if (!snapshot.exists()) {
+            throw new CustomError("Tracker not found", 404);
+        }
+
+        const vehicleImageURL = snapshot.val().vehicleImage;
         await admin.database().ref(`tracker/${tracker_id}`).remove();
+
+        if (vehicleImageURL) {
+            await deleteFileFromStorage(vehicleImageURL);
+        }
+
         res.json({ message: "Tracker deleted successfully" });
     } catch (error) {
-        console.error("Failed to delete tracker:", error);
-        res.status(500).json({ error: "Failed to delete tracker" });
-    }
-};
-
-const queryTracker = async (req, res) => {
-    const { approved } = req.query;
-    try {
-        const assetsRef = admin.database().ref('tracker');
-        const snapshot = await assetsRef.once('value');
-        const assets = [];
-        snapshot.forEach((childSnapshot) => {
-            const asset = childSnapshot.val();
-            if (approved === undefined || String(asset.approved) === approved) {
-                assets.push({ id: childSnapshot.key, ...asset });
-            }
-        });
-        res.json({ tracker: assets });
-    } catch (error) {
-        console.error("Failed to query tracker:", error);
-        res.status(500).json({ error: "Failed to query tracker" });
+        console.error("Error deleting tracker:", error);
+        res.status(500).json({ error: "Error deleting tracker" });
     }
 };
 
@@ -138,44 +230,12 @@ const approveEdit = async (req, res) => {
     }
 };
 
-const updateLocation = async (req, res) => {
-    const { tracker_id } = req.params;
-    const { latitude, longitude } = req.body;
-
-    if (latitude === undefined || longitude === undefined) {
-        return res.status(400).json({ error: "latitude and longitude are required" });
-    }
-
-    try {
-        const snapshot = await admin.database().ref(`tracker/${tracker_id}`).once('value');
-        if (!snapshot.exists()) {
-            throw new CustomError("Tracker not found", 404);
-        }
-
-        const updates = {
-            latitude,
-            longitude,
-            timestamp: admin.database.ServerValue.TIMESTAMP,
-            updatedAt: admin.database.ServerValue.TIMESTAMP
-        };
-
-        await admin.database().ref(`tracker/${tracker_id}`).update(updates);
-        res.json({ id: tracker_id, ...updates });
-    } catch (error) {
-        console.error("Failed to update tracker location:", error);
-        res.status(error.statusCode || 500).json({ error: error.message });
-    }
-};
-
-
-
 module.exports = {
-    createTracker: createTracker,
-    getTracker: getTracker,
+    createTracker,
+    getTracker,
     updateTracker,
     deleteTracker,
-    queryTracker,
+    listTrackers,
     requestEdit,
-    approveEdit,
-    updateLocation
+    approveEdit
 };

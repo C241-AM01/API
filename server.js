@@ -1,14 +1,17 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const { initializeFirebase } = require('./config/firebaseConfig');
+
+initializeFirebase();
+
 const authRoutes = require('./routes/auth');
 const assetRoutes = require('./routes/asset');
 const trackerRoutes = require('./routes/tracker');
 
 const app = express();
-initializeFirebase();
 
 app.use(bodyParser.json());
+
 app.use('/auth', authRoutes);
 app.use('/asset', assetRoutes);
 app.use('/tracker', trackerRoutes);
