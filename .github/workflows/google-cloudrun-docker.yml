@@ -89,6 +89,9 @@ jobs:
         run: |-
           gcloud auth configure-docker "${{ env.GAR_LOCATION }}-docker.pkg.dev"
         
+      - name: Log in to Docker Hub
+        run: echo "${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}" | docker login -u "${{ secrets.DOCKER_HUB_USERNAME }}" --password-stdin
+        
       - name: Build and Push Container
         run: |-
           docker build -t "${{ env.PROJECT_ID }}/${{ env.GAR_LOCATION }}/${{ env.SERVICE }}:${{ github.sha }}" ./
