@@ -7,7 +7,7 @@ const multer = require('multer');
 const upload = multer({ dest: 'uploads/' });
 
 router.post('/', authenticateJWT, authorizeRole(['admin']), upload.single('image'), assetService.addAsset);
-router.get('/', authenticateJWT, authorizeRole(['user', 'Admin', 'PIC']), assetService.listAssets);
+router.get('/', authenticateJWT, authorizeRole(['user', 'admin', 'pic']), assetService.listAssets);
 router.get('/:asset_id', authenticateJWT, authorizeRole(['user', 'admin', 'pic']), assetService.getAsset);
 router.put('/:asset_id', authenticateJWT, authorizeRole(['admin']), upload.single('image'), assetService.updateAsset);
 router.delete('/:asset_id', authenticateJWT, authorizeRole(['admin']), assetService.deleteAsset);

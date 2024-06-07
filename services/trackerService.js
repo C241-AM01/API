@@ -28,16 +28,43 @@ const uploadFileToStorage = async (filePath, destination) => {
     }
 };
 
-const deleteFileFromStorage = async (url) => {
+const deleteFileFromStorage = async (fileURL) => {
+    if (!fileURL) {
+        console.error("File URL is not provided or is invalid");
+        return;
+    }
+
+    let decodedPath; // Declare decodedPath here to ensure it is defined within the catch block
+
     try {
-        const filePath = decodeURIComponent(url.split('/').pop());
-        const file = bucket.file(filePath);
+        // Log the URL being processed
+        console.log(`Attempting to delete file at URL: ${fileURL}`);
+
+        // Validate and extract file path from the URL
+        const url = new URL(fileURL);
+        const filePath = url.pathname.split('/').slice(2).join('/'); // Adjust to handle GCS URL format
+
+        // Decode the file path
+        decodedPath = decodeURIComponent(filePath);
+
+        // Log the decoded path
+        console.log(`Decoded file path: ${decodedPath}`);
+
+        // Get a reference to the file
+        const file = bucket.file(decodedPath);
+
+        // Log the file reference information
+        console.log(`File reference: ${file.name}`);
+
         await file.delete();
-        console.log(`Successfully deleted file: ${filePath}`);
+        console.log(`Successfully deleted file: ${decodedPath}`);
     } catch (error) {
-        console.error(`Failed to delete file: ${url}`, error);
+        console.error(`Failed to delete file: ${decodedPath}`, error);
+        throw new Error("Failed to delete file from storage");
     }
 };
+
+
 
 const createTracker = async (req, res) => {
     const { tracker_id, name, latitude, longitude, timestamp, vehicleType, plateNum, description } = req.body;
@@ -75,7 +102,6 @@ const createTracker = async (req, res) => {
             image: uploadedImageURL,  // Include the uploaded image URL here
             createdAt: admin.database.ServerValue.TIMESTAMP,
             updatedAt: admin.database.ServerValue.TIMESTAMP,
-            approved: false,
             createdBy: req.user.uid
         });
         res.json({ tracker_id, name, latitude, longitude, timestamp, vehicleType, plateNum, image: uploadedImageURL });
@@ -116,7 +142,7 @@ const getTracker = async (req, res) => {
 
 const updateTracker = async (req, res) => {
     const { tracker_id } = req.params;
-    const updates = req.body;
+    let updates = req.body;
 
     try {
         const snapshot = await admin.database().ref(`tracker/${tracker_id}`).once('value');
@@ -125,8 +151,8 @@ const updateTracker = async (req, res) => {
         }
 
         const tracker = snapshot.val();
-        const isAdmin = req.user.role === 'Admin';
-        const isPIC = req.user.role === 'Pic';
+        const isAdmin = req.user.role === 'admin';
+        const isPIC = req.user.role === 'pic';
 
         // Check if user is allowed to update
         if (!isAdmin && !(isPIC && tracker.editApproved)) {
@@ -138,6 +164,27 @@ const updateTracker = async (req, res) => {
             return res.status(403).json({ error: "You need admin approval to edit this tracker" });
         }
 
+        let uploadedImageURL = null;
+        if (req.file) {
+            // If a new image is being uploaded, delete the old image
+            if (tracker.image) {
+                await deleteFileFromStorage(tracker.image);
+            }
+
+            const fileExtension = path.extname(req.file.originalname);
+            const fileName = `${tracker_id}${fileExtension}`;
+            const filePath = path.join(__dirname, '..', 'uploads', req.file.filename);
+            const destination = `tracked_vehicle/${fileName}`;
+
+            console.log(`Uploading new file to storage: ${filePath} to ${destination}`);
+            uploadedImageURL = await uploadFileToStorage(filePath, destination);
+            console.log(`Uploaded new file URL: ${uploadedImageURL}`);
+            fs.unlinkSync(filePath);
+            
+            // Include the new image URL in the updates
+            updates.image = uploadedImageURL;
+        }
+
         updates.updatedAt = admin.database.ServerValue.TIMESTAMP;
 
         // Reset edit approval status after update
@@ -147,6 +194,9 @@ const updateTracker = async (req, res) => {
             updates.editApprovedBy = null;
         }
 
+        // Ensure updates is a plain object
+        updates = { ...updates };
+
         await admin.database().ref(`tracker/${tracker_id}`).update(updates);
         res.json({ id: tracker_id, ...updates });
     } catch (error) {
@@ -155,18 +205,27 @@ const updateTracker = async (req, res) => {
     }
 };
 
+
+
 const deleteTracker = async (req, res) => {
     const { tracker_id } = req.params;
     try {
+        console.log(`Deleting tracker with ID: ${tracker_id}`);
+
         const snapshot = await admin.database().ref(`tracker/${tracker_id}`).once('value');
         if (!snapshot.exists()) {
             throw new CustomError("Tracker not found", 404);
         }
 
-        const vehicleImageURL = snapshot.val().vehicleImage;
+        const trackerData = snapshot.val();
+        const vehicleImageURL = trackerData.image;
+
+        console.log(`Tracker data:`, trackerData);
+
         await admin.database().ref(`tracker/${tracker_id}`).remove();
 
         if (vehicleImageURL) {
+            console.log(`Deleting vehicle image at URL: ${vehicleImageURL}`);
             await deleteFileFromStorage(vehicleImageURL);
         }
 
@@ -176,6 +235,7 @@ const deleteTracker = async (req, res) => {
         res.status(500).json({ error: "Error deleting tracker" });
     }
 };
+
 
 const requestEdit = async (req, res) => {
     const { asset_id } = req.params;
