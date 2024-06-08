@@ -6,6 +6,8 @@ const fs = require('fs');
 
 const bucket = admin.storage().bucket();
 
+const qrCodeDir = path.join(__dirname, '..', 'uploads', 'qrcodes');
+
 const generateQRCode = async (text) => {
     if (!text || typeof text !== 'string') {
         throw new CustomError("Invalid input for QR code generation", 400);
@@ -46,33 +48,21 @@ const deleteFileFromStorage = async (fileURL) => {
         return;
     }
 
-    let decodedPath; // Declare decodedPath here to ensure it is defined within the catch block
+    let decodedPath;
 
     try {
-        // Log the URL being processed
         console.log(`Attempting to delete file at URL: ${fileURL}`);
-
-        // Validate and extract file path from the URL
         const url = new URL(fileURL);
-        const filePath = url.pathname.split('/').slice(2).join('/'); // Adjust to handle GCS URL format
-
-        // Decode the file path
+        const filePath = url.pathname.split('/').slice(2).join('/');
         decodedPath = decodeURIComponent(filePath);
-
-        // Log the decoded path
         console.log(`Decoded file path: ${decodedPath}`);
-
-        // Get a reference to the file
         const file = bucket.file(decodedPath);
-
-        // Log the file reference information
         console.log(`File reference: ${file.name}`);
-
         await file.delete();
         console.log(`Successfully deleted file: ${decodedPath}`);
     } catch (error) {
         console.error(`Failed to delete file: ${decodedPath}`, error);
-        throw new Error("Failed to delete file from storage");
+        throw new CustomError("Failed to delete file from storage", 500);
     }
 };
 
@@ -80,9 +70,8 @@ const calculateCurrentPrice = (originalPrice, depreciationRate, depreciationValu
     const currentDate = new Date();
     const purchaseDateObject = new Date(purchaseDate);
     const diffTime = Math.abs(currentDate - purchaseDateObject);
-    let timeFactor = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); // Default to days
+    let timeFactor = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-    // Determine the time factor based on depreciation rate
     switch (depreciationRate) {
         case 'weekly':
             timeFactor /= 7;
@@ -95,23 +84,20 @@ const calculateCurrentPrice = (originalPrice, depreciationRate, depreciationValu
             break;
         case 'daily':
         default:
-            // Already in days
             break;
     }
 
-    // Ensure depreciationValue is a number and within a reasonable range
     const depreciationValueNumber = parseFloat(depreciationValue);
     if (isNaN(depreciationValueNumber) || depreciationValueNumber < 0) {
         throw new Error("Invalid depreciation value, must be more than 0");
     }
 
-    // If the asset was just purchased today, return the original price
     if (timeFactor === 0) {
         return originalPrice;
     }
 
     const currentPrice = originalPrice - (originalPrice * (depreciationValueNumber / 100) * timeFactor);
-    return Math.max(currentPrice, 0); // Ensure the current price is not negative
+    return Math.max(currentPrice, 0);
 };
 
 const addAsset = async (req, res) => {
@@ -129,7 +115,6 @@ const addAsset = async (req, res) => {
     }
 
     try {
-        // Retrieve the current highest asset ID
         const assetsRef = admin.database().ref('assets');
         const assetsSnapshot = await assetsRef.orderByKey().limitToLast(1).once('value');
         let newAssetId = 1;
@@ -139,34 +124,29 @@ const addAsset = async (req, res) => {
         });
 
         let uploadedImageURL = null;
-        if (req.file) {
-            const fileExtension = path.extname(req.file.originalname);
+        if (image) {
+            const fileExtension = path.extname(image.originalname);
             const fileName = `${newAssetId}${fileExtension}`;
-            const filePath = path.join(__dirname, '..', 'uploads', req.file.filename);
+            const filePath = path.join(__dirname, '..', 'uploads', image.filename);
             const destination = `asset/${fileName}`;
-    
+
             console.log(`Uploading file to storage: ${filePath} to ${destination}`);
             uploadedImageURL = await uploadFileToStorage(filePath, destination);
             console.log(`Uploaded file URL: ${uploadedImageURL}`);
             fs.unlinkSync(filePath);
         }
 
-        // Generate a QR code that encodes the URL of the uploaded image
         const qrCodeBase64 = await generateQRCode(uploadedImageURL);
         const qrCodeBuffer = Buffer.from(qrCodeBase64.split(',')[1], 'base64');
 
-        // Ensure the directory exists
-        const qrCodeDir = path.join(__dirname, '..', 'uploads', 'qrcodes');
         if (!fs.existsSync(qrCodeDir)) {
             fs.mkdirSync(qrCodeDir, { recursive: true });
         }
 
-        // Save the QR code image to the local file system
         const qrCodeFileName = `${newAssetId}.png`;
         const qrCodeFilePath = path.join(qrCodeDir, qrCodeFileName);
         fs.writeFileSync(qrCodeFilePath, qrCodeBuffer);
 
-        // Upload the QR code image to Firebase Storage
         const qrCodeDestination = `qrcodes/${qrCodeFileName}`;
         console.log(`Uploading QR code to storage: ${qrCodeFilePath} to ${qrCodeDestination}`);
         const qrCodeURL = await uploadFileToStorage(qrCodeFilePath, qrCodeDestination);
@@ -176,23 +156,23 @@ const addAsset = async (req, res) => {
         const newAsset = {
             name,
             description,
-            originalPrice: originalPrice,
-            depreciationRate: depreciationRate,
-            depreciationValue: depreciationValue,
-            purchaseDate: purchaseDate,
+            originalPrice,
+            depreciationRate,
+            depreciationValue,
+            purchaseDate,
             currentPrice: calculateCurrentPrice(originalPrice, depreciationRate, depreciationValue, purchaseDate),
             imageURL: uploadedImageURL,
             trackerId,
             createdBy: req.user.uid,
             createdAt: admin.database.ServerValue.TIMESTAMP,
-            qrCode: qrCodeURL, // Store the URL of the QR code image
+            qrCode: qrCodeURL,
             editRequested: false,
             editRequestedBy: null,
             editRequestedAt: null,
             editApproved: false,
             editApprovedBy: null,
             editApprovedAt: null,
-            proposedChanges: null // Store proposed changes
+            proposedChanges: null
         };
 
         const newAssetRef = admin.database().ref(`assets/${newAssetId}`);
@@ -204,6 +184,7 @@ const addAsset = async (req, res) => {
         res.status(500).json({ error: "Error adding asset" });
     }
 };
+
 
 const listAssets = async (req, res) => {
     try {
@@ -239,84 +220,8 @@ const getAsset = async (req, res) => {
 };
 
 const updateAsset = async (req, res) => {
-    const { tracker_id } = req.params;
-    let updates = req.body;
-
-    try {
-        const snapshot = await admin.database().ref(`assets/${tracker_id}`).once('value');
-        if (!snapshot.exists()) {
-            throw new CustomError("Asset not found", 404);
-        }
-
-        const asset = snapshot.val();
-        const isAdmin = req.user.role === 'admin';
-        const isPIC = req.user.role === 'pic';
-
-        // Check if user is allowed to update
-        if (!isAdmin && !(isPIC && asset.editApproved)) {
-            return res.status(403).json({ error: "You do not have permission to edit this asset" });
-        }
-
-        // Only allow one edit request at a time for PIC
-        if (isPIC && !asset.editApproved) {
-            return res.status(403).json({ error: "You need admin approval to edit this asset" });
-        }
-
-        let uploadedImageURL = null;
-        if (req.file) {
-            // If a new image is being uploaded, delete the old image
-            if (asset.imageURL) {
-                await deleteFileFromStorage(asset.imageURL);
-            }
-            if (asset.qrCode){
-                await deleteFileFromStorage(asset.qrCode)
-            }
-
-            const fileExtension = path.extname(req.file.originalname);
-            const fileName = `${asset_Id}${fileExtension}`;
-            const filePath = path.join(__dirname, '..', 'uploads', req.file.filename);
-            const destination = `asset/${fileName}`;
-
-            console.log(`Uploading new file to storage: ${filePath} to ${destination}`);
-            uploadedImageURL = await uploadFileToStorage(filePath, destination);
-            console.log(`Uploaded new file URL: ${uploadedImageURL}`);
-            fs.unlinkSync(filePath);
-            
-            // Include the new image URL in the updates
-            updates.image = uploadedImageURL;
-        }
-        const qrCodeFileName = '${asset_id}.png';
-        const qrCodeFilePath = path.join(qrCodeDir, qrCodeFileName);
-
-        const qrCodeDestination = `qrcodes/${qrCodeFileName}`;
-        console.log(`Uploading QR code to storage: ${qrCodeFilePath} to ${qrCodeDestination}`);
-        const qrCodeURL = await uploadFileToStorage(qrCodeFilePath, qrCodeDestination);
-        console.log(`Uploaded QR code URL: ${qrCodeURL}`);
-        fs.unlinkSync(qrCodeFilePath);
-
-        updates.updatedAt = admin.database.ServerValue.TIMESTAMP;
-
-        // Reset edit approval status after update
-        if (asset.editApproved) {
-            updates.editApproved = false;
-            updates.editApprovedAt = null;
-            updates.editApprovedBy = null;
-        }
-
-        // Ensure updates is a plain object
-        updates = { ...updates };
-
-        await admin.database().ref(`asset/${tracker_id}`).update(updates);
-        res.json({ id: tracker_id, ...updates });
-    } catch (error) {
-        console.error("Error updating asset:", error);
-        res.status(error.statusCode || 500).json({ error: error.message });
-    }
-};
-
-const updateAsset = async (req, res) => {
     const { asset_id } = req.params;
-    const updates = { ...req.body }; // Ensure updates is a plain object
+    const updates = { ...req.body };
     const image = req.file;
 
     try {
@@ -329,141 +234,155 @@ const updateAsset = async (req, res) => {
         const oldImageURL = asset.imageURL;
         const oldQRCodeURL = asset.qrCode;
 
-        // Update image if a new image is provided
         if (image) {
-            // Preserve the original file extension
-            const extension = path.extname(image.originalname);
-            const imageName = `${path.basename(image.filename, extension)}${extension}`;
-            const imageURL = await uploadFileToStorage(image.path, `assets/${imageName}`);
-            updates.imageURL = imageURL;
-
             if (oldImageURL) {
                 await deleteFileFromStorage(oldImageURL);
             }
-        }
-
-        // Generate new QR code if the name is being updated
-        if (updates.name && updates.name !== asset.name) {
-            const qrCodeBase64 = await generateQRCode(updates.name);
-
-            // Ensure the directory exists
-            const qrCodeDir = path.join(__dirname, '..', 'uploads', 'qrcodes');
-            if (!fs.existsSync(qrCodeDir)) {
-                fs.mkdirSync(qrCodeDir, { recursive: true });
-            }
-
-            const qrCodeBuffer = Buffer.from(qrCodeBase64.split(',')[1], 'base64');
-            const qrCodeFileName = `${updates.name}_${Date.now()}.png`;
-            const qrCodeFilePath = path.join(qrCodeDir, qrCodeFileName);
-            fs.writeFileSync(qrCodeFilePath, qrCodeBuffer);
-            const qrCodeURL = await uploadFileToStorage(qrCodeFilePath, `qrcodes/${qrCodeFileName}`);
-            fs.unlinkSync(qrCodeFilePath);
-            updates.qrCode = qrCodeURL;
-
             if (oldQRCodeURL) {
                 await deleteFileFromStorage(oldQRCodeURL);
             }
+
+            const fileExtension = path.extname(image.originalname);
+            const fileName = `${asset_id}${fileExtension}`;
+            const filePath = path.join(__dirname, '..', 'uploads', image.filename);
+            const destination = `asset/${fileName}`;
+
+            updates.imageURL = await uploadFileToStorage(filePath, destination);
+            fs.unlinkSync(filePath);
+
+            const qrCodeBase64 = await generateQRCode(updates.imageURL);
+            const qrCodeBuffer = Buffer.from(qrCodeBase64.split(',')[1], 'base64');
+
+            const qrCodeFileName = `${asset_id}.png`;
+            const qrCodeFilePath = path.join(qrCodeDir, qrCodeFileName);
+            fs.writeFileSync(qrCodeFilePath, qrCodeBuffer);
+
+            const qrCodeDestination = `qrcodes/${qrCodeFileName}`;
+            updates.qrCode = await uploadFileToStorage(qrCodeFilePath, qrCodeDestination);
+            fs.unlinkSync(qrCodeFilePath);
         }
 
-        // Update current price if original price, depreciation value, or purchase date is being updated
-        const originalPrice = updates.originalPrice !== undefined ? updates.originalPrice : asset.originalPrice;
-        const depreciationValue = updates.depreciationValue !== undefined ? updates.depreciationValue : asset.depreciationValue;
-        const purchaseDate = updates.purchaseDate !== undefined ? updates.purchaseDate : asset.purchaseDate;
-
-        // Validate depreciation value if provided
-        if (updates.depreciationValue !== undefined && (typeof updates.depreciationValue !== 'number' || updates.depreciationValue < 0)) {
-            throw new CustomError("Invalid depreciation value, must be a non-negative number", 400);
-        }
-
-        if (updates.originalPrice !== undefined || updates.depreciationValue !== undefined || updates.purchaseDate !== undefined) {
-            const currentPrice = calculateCurrentPrice(originalPrice, asset.depreciationRate, depreciationValue, purchaseDate);
-            updates.currentPrice = currentPrice;
-        }
-
-        updates.updatedAt = admin.database.ServerValue.TIMESTAMP;
-
-        // Reset edit approval status after update
-        if (asset.editApproved) {
-            updates.editApproved = false;
-            updates.editApprovedAt = null;
-            updates.editApprovedBy = null;
-        }
-
-        // Ensure updates is a plain object
-        if (typeof updates !== 'object' || updates === null) {
-            throw new CustomError("Invalid updates object", 400);
+        if (updates.originalPrice || updates.depreciationRate || updates.depreciationValue || updates.purchaseDate) {
+            updates.currentPrice = calculateCurrentPrice(
+                updates.originalPrice || asset.originalPrice,
+                updates.depreciationRate || asset.depreciationRate,
+                updates.depreciationValue || asset.depreciationValue,
+                updates.purchaseDate || asset.purchaseDate
+            );
         }
 
         await admin.database().ref(`assets/${asset_id}`).update(updates);
-        res.json({ id: asset_id, ...updates });
+
+        res.json({ message: "Asset updated successfully" });
     } catch (error) {
         console.error("Error updating asset:", error);
         res.status(error.statusCode || 500).json({ error: error.message });
     }
 };
 
-
 const deleteAsset = async (req, res) => {
     const { asset_id } = req.params;
-    try {
-        console.log(`Deleting asset with ID: ${asset_id}`);
 
+    try {
         const snapshot = await admin.database().ref(`assets/${asset_id}`).once('value');
         if (!snapshot.exists()) {
             throw new CustomError("Asset not found", 404);
         }
 
-        const assetData = snapshot.val();
-        const imageURL = assetData.imageURL;
-        const qrCodeURL = assetData.qrCode;
+        const asset = snapshot.val();
 
-        console.log(`Asset data:`, assetData);
+        if (asset.imageURL) {
+            await deleteFileFromStorage(asset.imageURL);
+        }
+
+        if (asset.qrCode) {
+            await deleteFileFromStorage(asset.qrCode);
+        }
 
         await admin.database().ref(`assets/${asset_id}`).remove();
-
-        if (imageURL) {
-            console.log(`Deleting image at URL: ${imageURL}`);
-            await deleteFileFromStorage(imageURL);
-        }
-        if (qrCodeURL) {
-            console.log(`Deleting QR code at URL: ${qrCodeURL}`);
-            await deleteFileFromStorage(qrCodeURL);
-        }
 
         res.json({ message: "Asset deleted successfully" });
     } catch (error) {
         console.error("Error deleting asset:", error);
-        res.status(500).json({ error: "Error deleting asset" });
+        res.status(error.statusCode || 500).json({ error: error.message });
     }
 };
 
-
-
 const requestEdit = async (req, res) => {
     const { asset_id } = req.params;
-    const proposedChanges = req.body;
+    let updates = req.body;
+    const image = req.file;
 
     try {
+        // Ensure updates is a plain object
+        if (typeof updates !== 'object' || updates === null) {
+            throw new CustomError("Invalid data format", 400);
+        }
+
         const snapshot = await admin.database().ref(`assets/${asset_id}`).once('value');
         if (!snapshot.exists()) {
             throw new CustomError("Asset not found", 404);
         }
 
-        if (req.user.role.toLowerCase() !== 'pic') {
-            return res.status(403).json({ error: "Only PIC can request edit access" });
+        const tracker = snapshot.val();
+        const isPIC = req.user.role === 'pic';
+
+        // Ensure the user is PIC
+        if (!isPIC) {
+            return res.status(403).json({ error: "You do not have permission to request an edit for this asset" });
         }
 
-        await admin.database().ref(`assets/${asset_id}`).update({
-            editRequested: true,
-            editRequestedBy: req.user.uid,
-            editRequestedAt: admin.database.ServerValue.TIMESTAMP,
-            proposedChanges
-        });
+        const oldImageURL = asset.imageURL;
+        const oldQRCodeURL = asset.qrCode;
 
-        res.json({ message: "Edit access requested successfully" });
+        if (image) {
+            if (oldImageURL) {
+                await deleteFileFromStorage(oldImageURL);
+            }
+            if (oldQRCodeURL) {
+                await deleteFileFromStorage(oldQRCodeURL);
+            }
+
+            const fileExtension = path.extname(image.originalname);
+            const fileName = `${asset_id}${fileExtension}`;
+            const filePath = path.join(__dirname, '..', 'uploads', image.filename);
+            const destination = `asset/${fileName}`;
+
+            updates.imageURL = await uploadFileToStorage(filePath, destination);
+            fs.unlinkSync(filePath);
+
+            const qrCodeBase64 = await generateQRCode(updates.imageURL);
+            const qrCodeBuffer = Buffer.from(qrCodeBase64.split(',')[1], 'base64');
+
+            const qrCodeFileName = `${asset_id}.png`;
+            const qrCodeFilePath = path.join(qrCodeDir, qrCodeFileName);
+            fs.writeFileSync(qrCodeFilePath, qrCodeBuffer);
+
+            const qrCodeDestination = `qrcodes/${qrCodeFileName}`;
+            updates.qrCode = await uploadFileToStorage(qrCodeFilePath, qrCodeDestination);
+            fs.unlinkSync(qrCodeFilePath);
+        }
+        if (updates.originalPrice || updates.depreciationRate || updates.depreciationValue || updates.purchaseDate) {
+            updates.currentPrice = calculateCurrentPrice(
+                updates.originalPrice || asset.originalPrice,
+                updates.depreciationRate || asset.depreciationRate,
+                updates.depreciationValue || asset.depreciationValue,
+                updates.purchaseDate || asset.purchaseDate
+            );
+        }
+
+        updates.editRequested = true;
+        updates.editRequestedBy = req.user.uid;
+        updates.editRequestedAt = admin.database.ServerValue.TIMESTAMP;
+
+        // Ensure updates is a plain object
+        updates = { ...updates };
+
+        await admin.database().ref(`assets/${tracker_id}`).update(updates);
+        res.json({ id: tracker_id, ...updates });
     } catch (error) {
-        console.error("Error requesting edit access:", error);
-        res.status(500).json({ error: "Error requesting edit access" });
+        console.error("Error requesting edit:", error);
+        res.status(error.statusCode || 500).json({ error: error.message });
     }
 };
 
@@ -477,34 +396,44 @@ const approveEdit = async (req, res) => {
             throw new CustomError("Asset not found", 404);
         }
 
-        const asset = snapshot.val();
+        const tracker = snapshot.val();
+        const isAdmin = req.user.role === 'admin';
 
-        if (req.user.role.toLowerCase() !== 'admin') {
-            return res.status(403).json({ error: "Only admin can approve edit access" });
+        if (!isAdmin) {
+            return res.status(403).json({ error: "Only admin can approve edits" });
         }
 
-        const proposedChanges = asset.proposedChanges || {};
-        const updates = {
-            ...proposedChanges,
-            editApproved: true,
+        if (!tracker.editRequested) {
+            return res.status(400).json({ error: "No edit request found" });
+        }
+
+        const updates = tracker.pendingUpdates || {};
+
+        // Apply updates, including new image URL if present
+        if (updates.imageURL && tracker.imageURL) {
+            await deleteFileFromStorage(tracker.imageURL);
+        }
+        if (updates.qrCode && tracker.qrCode) {
+            await deleteFileFromStorage(tracker.qrCode);
+        }
+
+        await admin.database().ref(`assets/${asset_id}`).update({
+            ...updates,
+            editApproved: false,
             editApprovedBy: req.user.uid,
             editApprovedAt: admin.database.ServerValue.TIMESTAMP,
             editRequested: false,
             editRequestedBy: null,
             editRequestedAt: null,
-            proposedChanges: null // Clear the proposed changes after approval
-        };
+            pendingUpdates: null
+        });
 
-        await admin.database().ref(`assets/${asset_id}`).update(updates);
-
-        res.json({ message: "Edit access approved successfully" });
+        res.json({ message: "Edit request approved successfully", updates });
     } catch (error) {
-        console.error("Error approving edit access:", error);
-        res.status(500).json({ error: "Error approving edit access" });
+        console.error("Error approving edit:", error);
+        res.status(500).json({ error: "Error approving edit" });
     }
 };
-
-
 
 module.exports = {
     addAsset,

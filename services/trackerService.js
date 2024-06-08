@@ -152,16 +152,10 @@ const updateTracker = async (req, res) => {
 
         const tracker = snapshot.val();
         const isAdmin = req.user.role === 'admin';
-        const isPIC = req.user.role === 'pic';
 
         // Check if user is allowed to update
-        if (!isAdmin && !(isPIC && tracker.editApproved)) {
+        if (!isAdmin) {
             return res.status(403).json({ error: "You do not have permission to edit this tracker" });
-        }
-
-        // Only allow one edit request at a time for PIC
-        if (isPIC && !tracker.editApproved) {
-            return res.status(403).json({ error: "You need admin approval to edit this tracker" });
         }
 
         let uploadedImageURL = null;
@@ -187,8 +181,8 @@ const updateTracker = async (req, res) => {
 
         updates.updatedAt = admin.database.ServerValue.TIMESTAMP;
 
-        // Reset edit approval status after update
-        if (tracker.editApproved) {
+        // Reset edit approval status after update if it was approved for PIC
+        if (isPIC && tracker.editApproved) {
             updates.editApproved = false;
             updates.editApprovedAt = null;
             updates.editApprovedBy = null;
@@ -204,6 +198,7 @@ const updateTracker = async (req, res) => {
         res.status(error.statusCode || 500).json({ error: error.message });
     }
 };
+
 
 
 
@@ -238,65 +233,132 @@ const deleteTracker = async (req, res) => {
 
 
 const requestEdit = async (req, res) => {
-    const { asset_id } = req.params;
+    const { tracker_id } = req.params;
+    let updates = req.body;
 
     try {
-        const snapshot = await admin.database().ref(`tracker/${asset_id}`).once('value');
+        // Ensure updates is a plain object
+        if (typeof updates !== 'object' || updates === null) {
+            throw new CustomError("Invalid data format", 400);
+        }
+
+        const snapshot = await admin.database().ref(`tracker/${tracker_id}`).once('value');
         if (!snapshot.exists()) {
-            throw new CustomError("Asset not found", 404);
+            throw new CustomError("Tracker not found", 404);
         }
 
-        const asset = snapshot.val();
+        const tracker = snapshot.val();
+        const isPIC = req.user.role === 'pic';
 
-        // Ensure only PIC can request edit access
-        if (req.user.role.toLowerCase() !== 'pic') {  // Normalize the case for comparison
-            return res.status(403).json({ error: "Only PIC can request edit access" });
+        // Ensure the user is PIC
+        if (!isPIC) {
+            return res.status(403).json({ error: "You do not have permission to request an edit for this tracker" });
         }
 
-        await admin.database().ref(`tracker/${asset_id}`).update({
-            editRequested: true,
-            editRequestedBy: req.user.uid,
-            editRequestedAt: admin.database.ServerValue.TIMESTAMP,
-        });
+        let uploadedImageURL = null;
+        if (req.file) {
+            // If a new image is being uploaded, delete the old image
+            if (tracker.image) {
+                await deleteFileFromStorage(tracker.image);
+            }
 
-        res.json({ message: "Edit access requested successfully" });
+            const fileExtension = path.extname(req.file.originalname);
+            const fileName = `${tracker_id}${fileExtension}`;
+            const filePath = path.join(__dirname, '..', 'uploads', req.file.filename);
+            const destination = `tracked_vehicle/${fileName}`;
+
+            console.log(`Uploading new file to storage: ${filePath} to ${destination}`);
+            uploadedImageURL = await uploadFileToStorage(filePath, destination);
+            console.log(`Uploaded new file URL: ${uploadedImageURL}`);
+            fs.unlinkSync(filePath);
+
+            // Include the new image URL in the updates
+            updates.image = uploadedImageURL;
+        }
+
+        updates.editRequested = true;
+        updates.editRequestedBy = req.user.uid;
+        updates.editRequestedAt = admin.database.ServerValue.TIMESTAMP;
+
+        // Ensure updates is a plain object
+        updates = { ...updates };
+
+        await admin.database().ref(`tracker/${tracker_id}`).update(updates);
+        res.json({ id: tracker_id, ...updates });
     } catch (error) {
-        console.error("Error requesting edit access:", error);
-        res.status(500).json({ error: "Error requesting edit access" });
+        console.error("Error requesting edit:", error);
+        res.status(error.statusCode || 500).json({ error: error.message });
     }
 };
 
+
 const approveEdit = async (req, res) => {
-    const { asset_id } = req.params;
+    const { tracker_id } = req.params;
 
     try {
-        const snapshot = await admin.database().ref(`tracker/${asset_id}`).once('value');
+        const snapshot = await admin.database().ref(`tracker/${tracker_id}`).once('value');
         if (!snapshot.exists()) {
-            throw new CustomError("Asset not found", 404);
+            throw new CustomError("Tracker not found", 404);
         }
 
-        const asset = snapshot.val();
+        const tracker = snapshot.val();
+        const isAdmin = req.user.role === 'admin';
 
-        // Ensure only admin can approve edit access
-        if (req.user.role.toLowerCase() !== 'admin') {  // Normalize the case for comparison
-            return res.status(403).json({ error: "Only admin can approve edit access" });
+        if (!isAdmin) {
+            return res.status(403).json({ error: "Only admin can approve edits" });
         }
 
-        await admin.database().ref(`tracker/${asset_id}`).update({
-            editApproved: true,
+        if (!tracker.editRequested) {
+            return res.status(400).json({ error: "No edit request found" });
+        }
+
+        const updates = tracker.pendingUpdates || {};
+
+        // Apply updates, including new image URL if present
+        if (updates.image && tracker.image) {
+            await deleteFileFromStorage(tracker.image);
+        }
+
+        await admin.database().ref(`tracker/${tracker_id}`).update({
+            ...updates,
+            editApproved: false,
             editApprovedBy: req.user.uid,
             editApprovedAt: admin.database.ServerValue.TIMESTAMP,
             editRequested: false,
             editRequestedBy: null,
             editRequestedAt: null,
+            pendingUpdates: null
         });
 
-        res.json({ message: "Edit access approved successfully" });
+        res.json({ message: "Edit request approved successfully", updates });
     } catch (error) {
-        console.error("Error approving edit access:", error);
-        res.status(500).json({ error: "Error approving edit access" });
+        console.error("Error approving edit:", error);
+        res.status(500).json({ error: "Error approving edit" });
     }
 };
+
+
+
+const addLocationHistory = async (req, res) => {
+    const { tracker_id } = req.params;
+    const { longitude, latitude, timestamp } = req.body;
+
+    if (!tracker_id || !longitude || !latitude || !timestamp) {
+        return res.status(400).json({ error: "tracker_id, longitude, latitude, and timestamp are required" });
+    }
+
+    try {
+        const ref = admin.database().ref(`tracker/${tracker_id}/locationHistory`);
+        const locationHistory = {};
+        locationHistory[timestamp] = [longitude, latitude];
+        await ref.update(locationHistory);
+        res.json({ message: "Location history added successfully" });
+    } catch (error) {
+        console.error("Failed to add location history:", error);
+        res.status(500).json({ error: "Failed to add location history" });
+    }
+};
+
 
 module.exports = {
     createTracker,
@@ -305,5 +367,6 @@ module.exports = {
     deleteTracker,
     listTrackers,
     requestEdit,
-    approveEdit
+    approveEdit,
+    addLocationHistory
 };
