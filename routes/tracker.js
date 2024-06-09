@@ -7,7 +7,7 @@ const multer = require('multer');
 const upload = multer({ dest: 'uploads/' });
 
 router.post('/', authenticateJWT, authorizeRole(['admin']), upload.single('image'), trackerService.createTracker);
-router.post('/locationHistory/:tracker_id', authenticateJWT, authorizeRole(['admin']), trackerService.addLocationHistory);
+router.post('/locationHistory/:tracker_id', authenticateJWT, authorizeRole(['admin']), upload.none(),trackerService.addLocationHistory);
 router.get('/', authenticateJWT, authorizeRole(['user', 'admin', 'pic']), trackerService.listTrackers);
 router.get('/:tracker_id', authenticateJWT, authorizeRole(['user', 'admin', 'pic']), trackerService.getTracker);
 router.put('/:tracker_id', authenticateJWT, authorizeRole(['admin']), upload.single('image'), trackerService.updateTracker);

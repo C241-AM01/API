@@ -323,8 +323,6 @@ const requestEdit = async (req, res) => {
         if (!snapshot.exists()) {
             throw new CustomError("Asset not found", 404);
         }
-
-        const tracker = snapshot.val();
         const isPIC = req.user.role === 'pic';
 
         // Ensure the user is PIC
@@ -332,6 +330,7 @@ const requestEdit = async (req, res) => {
             return res.status(403).json({ error: "You do not have permission to request an edit for this asset" });
         }
 
+        const asset = snapshot.val();
         const oldImageURL = asset.imageURL;
         const oldQRCodeURL = asset.qrCode;
 
@@ -362,6 +361,7 @@ const requestEdit = async (req, res) => {
             updates.qrCode = await uploadFileToStorage(qrCodeFilePath, qrCodeDestination);
             fs.unlinkSync(qrCodeFilePath);
         }
+
         if (updates.originalPrice || updates.depreciationRate || updates.depreciationValue || updates.purchaseDate) {
             updates.currentPrice = calculateCurrentPrice(
                 updates.originalPrice || asset.originalPrice,
@@ -375,17 +375,15 @@ const requestEdit = async (req, res) => {
         updates.editRequestedBy = req.user.uid;
         updates.editRequestedAt = admin.database.ServerValue.TIMESTAMP;
 
-        // Ensure updates is a plain object
-        updates = { ...updates };
+        const pendingUpdates = { ...updates };
 
-        await admin.database().ref(`assets/${tracker_id}`).update(updates);
-        res.json({ id: tracker_id, ...updates });
+        await admin.database().ref(`assets/${asset_id}`).update({ pendingUpdates });
+        res.json({ id: asset_id, ...pendingUpdates });
     } catch (error) {
         console.error("Error requesting edit:", error);
         res.status(error.statusCode || 500).json({ error: error.message });
     }
 };
-
 
 const approveEdit = async (req, res) => {
     const { asset_id } = req.params;
@@ -403,11 +401,11 @@ const approveEdit = async (req, res) => {
             return res.status(403).json({ error: "Only admin can approve edits" });
         }
 
-        if (!tracker.editRequested) {
-            return res.status(400).json({ error: "No edit request found" });
-        }
-
         const updates = tracker.pendingUpdates || {};
+
+        if (Object.keys(updates).length === 0) {
+            return res.status(400).json({ error: "No pending updates to approve" });
+        }
 
         // Apply updates, including new image URL if present
         if (updates.imageURL && tracker.imageURL) {
@@ -434,6 +432,7 @@ const approveEdit = async (req, res) => {
         res.status(500).json({ error: "Error approving edit" });
     }
 };
+
 
 module.exports = {
     addAsset,

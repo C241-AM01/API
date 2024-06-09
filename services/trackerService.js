@@ -181,13 +181,6 @@ const updateTracker = async (req, res) => {
 
         updates.updatedAt = admin.database.ServerValue.TIMESTAMP;
 
-        // Reset edit approval status after update if it was approved for PIC
-        if (isPIC && tracker.editApproved) {
-            updates.editApproved = false;
-            updates.editApprovedAt = null;
-            updates.editApprovedBy = null;
-        }
-
         // Ensure updates is a plain object
         updates = { ...updates };
 
@@ -358,6 +351,7 @@ const addLocationHistory = async (req, res) => {
         res.status(500).json({ error: "Failed to add location history" });
     }
 };
+
 
 
 module.exports = {
