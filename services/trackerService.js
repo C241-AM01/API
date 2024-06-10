@@ -64,10 +64,8 @@ const deleteFileFromStorage = async (fileURL) => {
     }
 };
 
-
-
 const createTracker = async (req, res) => {
-    const { tracker_id, name, latitude, longitude, timestamp, vehicleType, plateNum, description } = req.body;
+    const { tracker_id, name, latitude, longitude, timestamp, vehicleType, plateNum, description, mobile } = req.body;
 
     if (!tracker_id || longitude == null || latitude == null || !timestamp) {
         return res.status(400).json({ error: "tracker_id, longitude, latitude, and timestamp are required" });
@@ -90,6 +88,9 @@ const createTracker = async (req, res) => {
         [timestamp]: [longitude, latitude]
     };
 
+    // Convert mobile to boolean if it's a string, considering all cases
+    const mobileFlag = (mobile === 'true' || mobile === true);
+
     try {
         const ref = admin.database().ref(`tracker/${tracker_id}`);
         await ref.set({
@@ -97,19 +98,21 @@ const createTracker = async (req, res) => {
             name,
             locationHistory,
             description,
-            vehicleType, 
+            vehicleType,
             plateNum,
-            image: uploadedImageURL,  // Include the uploaded image URL here
+            image: uploadedImageURL,
             createdAt: admin.database.ServerValue.TIMESTAMP,
             updatedAt: admin.database.ServerValue.TIMESTAMP,
-            createdBy: req.user.uid
+            createdBy: req.user.uid,
+            mobile: mobileFlag
         });
-        res.json({ tracker_id, name, latitude, longitude, timestamp, vehicleType, plateNum, image: uploadedImageURL });
+        res.json({ tracker_id, name, latitude, longitude, timestamp, vehicleType, plateNum, image: uploadedImageURL, mobile: mobileFlag });
     } catch (error) {
         console.error("Failed to create tracker asset:", error);
         res.status(500).json({ error: "Failed to create tracker asset" });
     }
 };
+
 
 const listTrackers = async (req, res) => {
     try {
@@ -147,7 +150,7 @@ const updateTracker = async (req, res) => {
     try {
         const snapshot = await admin.database().ref(`tracker/${tracker_id}`).once('value');
         if (!snapshot.exists()) {
-            throw new CustomError("Tracker not found", 404);
+            return res.status(404).json({ error: "Tracker not found" });
         }
 
         const tracker = snapshot.val();
@@ -179,10 +182,17 @@ const updateTracker = async (req, res) => {
             updates.image = uploadedImageURL;
         }
 
+        // Ensure the mobile flag is a boolean if it's being updated
+        if (updates.mobile !== undefined) {
+            updates.mobile = updates.mobile === 'true' || updates.mobile === true;
+        }
+
         updates.updatedAt = admin.database.ServerValue.TIMESTAMP;
 
         // Ensure updates is a plain object
         updates = { ...updates };
+
+        console.log(`Updates: ${JSON.stringify(updates)}`);
 
         await admin.database().ref(`tracker/${tracker_id}`).update(updates);
         res.json({ id: tracker_id, ...updates });
@@ -191,9 +201,6 @@ const updateTracker = async (req, res) => {
         res.status(error.statusCode || 500).json({ error: error.message });
     }
 };
-
-
-
 
 const deleteTracker = async (req, res) => {
     const { tracker_id } = req.params;
@@ -330,8 +337,6 @@ const approveEdit = async (req, res) => {
     }
 };
 
-
-
 const addLocationHistory = async (req, res) => {
     const { tracker_id } = req.params;
     const { longitude, latitude, timestamp } = req.body;
@@ -341,16 +346,31 @@ const addLocationHistory = async (req, res) => {
     }
 
     try {
-        const ref = admin.database().ref(`tracker/${tracker_id}/locationHistory`);
+        const ref = admin.database().ref(`tracker/${tracker_id}`);
+        const trackerSnapshot = await ref.once('value');
+        if (!trackerSnapshot.exists()) {
+            return res.status(404).json({ error: "Tracker not found" });
+        }
+
+        const tracker = trackerSnapshot.val();
+        console.log(`Tracker mobile flag: ${tracker.mobile}`); // Log the value of the mobile flag
+
+        if (!tracker.mobile) {
+            return res.status(400).json({ error: "Cannot add location history. The tracker is not mobile." });
+        }
+
+        const locationHistoryRef = ref.child('locationHistory');
         const locationHistory = {};
         locationHistory[timestamp] = [longitude, latitude];
-        await ref.update(locationHistory);
+        await locationHistoryRef.update(locationHistory);
+
         res.json({ message: "Location history added successfully" });
     } catch (error) {
         console.error("Failed to add location history:", error);
         res.status(500).json({ error: "Failed to add location history" });
     }
 };
+
 
 
 

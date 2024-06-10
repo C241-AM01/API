@@ -101,20 +101,20 @@ const calculateCurrentPrice = (originalPrice, depreciationRate, depreciationValu
 };
 
 const addAsset = async (req, res) => {
-    const { name, description, originalPrice, depreciationRate, depreciationValue, purchaseDate, trackerId } = req.body;
+    const { name, description, originalPrice, depreciationRate, depreciationValue, purchaseDate, trackerId, warehouseId, delivered } = req.body;
     const image = req.file;
 
     if (!name || typeof name !== 'string') {
         return res.status(400).json({ error: "Invalid asset name" });
     }
 
-    const trackerRef = admin.database().ref(`tracker/${trackerId}`);
-    const trackerSnapshot = await trackerRef.once('value');
-    if (!trackerSnapshot.exists()) {
-        return res.status(400).json({ error: "Invalid tracker_id. The specified tracker_id does not exist." });
-    }
-
     try {
+        const trackerRef = admin.database().ref(`tracker/${trackerId}`);
+        const trackerSnapshot = await trackerRef.once('value');
+        if (!trackerSnapshot.exists()) {
+            return res.status(400).json({ error: "Invalid tracker_id. The specified tracker_id does not exist." });
+        }
+
         const assetsRef = admin.database().ref('assets');
         const assetsSnapshot = await assetsRef.orderByKey().limitToLast(1).once('value');
         let newAssetId = 1;
@@ -153,6 +153,8 @@ const addAsset = async (req, res) => {
         console.log(`Uploaded QR code URL: ${qrCodeURL}`);
         fs.unlinkSync(qrCodeFilePath);
 
+        const deliveredFlag = (delivered === 'true' || delivered === true);
+
         const newAsset = {
             name,
             description,
@@ -163,6 +165,8 @@ const addAsset = async (req, res) => {
             currentPrice: calculateCurrentPrice(originalPrice, depreciationRate, depreciationValue, purchaseDate),
             imageURL: uploadedImageURL,
             trackerId,
+            warehouseId,
+            delivered: deliveredFlag,
             createdBy: req.user.uid,
             createdAt: admin.database.ServerValue.TIMESTAMP,
             qrCode: qrCodeURL,
@@ -177,6 +181,10 @@ const addAsset = async (req, res) => {
 
         const newAssetRef = admin.database().ref(`assets/${newAssetId}`);
         await newAssetRef.set(newAsset);
+
+        // Add asset ID to the warehouse's asset list
+        const warehouseRef = admin.database().ref(`warehouses/${warehouseId}/assets`);
+        await warehouseRef.update({ [newAssetId]: true });
 
         res.json({ message: "Asset added successfully", id: newAssetId });
     } catch (error) {
@@ -269,6 +277,10 @@ const updateAsset = async (req, res) => {
                 updates.depreciationValue || asset.depreciationValue,
                 updates.purchaseDate || asset.purchaseDate
             );
+        }
+
+        if (updates.delivered !== undefined) {
+            updates.delivered = updates.delivered === 'true' || updates.delivered === true;
         }
 
         await admin.database().ref(`assets/${asset_id}`).update(updates);
