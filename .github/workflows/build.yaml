@@ -23,22 +23,30 @@ jobs:
         project_id: ${{ secrets.GOOGLE_PROJECT }}
         service_account_key: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
         export_default_credentials: true 
-      
+
+    - name: Write GCP credentials to file
+      run: |
+        echo "${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}" > $HOME/gcloud-service-key.json
+
+    - name: Authenticate Docker with gcloud
+      run: |
+        gcloud auth activate-service-account --key-file=$HOME/gcloud-service-key.json
+        gcloud auth configure-docker asia-southeast1-docker.pkg.dev
+
     - name: build and push the docker image 
       env:
         GOOGLE_PROJECT: ${{ secrets.GOOGLE_PROJECT }}
       run: |
-        gcloud auth configure-docker asia-southeast1-docker.pkg.dev
         docker build -t asia-southeast1-docker.pkg.dev/$GOOGLE_PROJECT/be-tracky/node:latest .
         docker push asia-southeast1-docker.pkg.dev/$GOOGLE_PROJECT/be-tracky/node:latest
 
-    # - name: deploy to cloud run
-    #   id: deploy
-    #   uses: google-github-actions/deploy-cloudrun@v2
-    #   with:
-    #     service: ${{ env.SERVICE }}
-    #     region: ${{ env.REGION }}
-    #     image: "${{ secrets.GOOGLE_PROJECT }}/be-tracky/${{ env.SERVICE }}:${{ github.sha }}"
+    - name: deploy to cloud run
+      id: deploy
+      uses: google-github-actions/deploy-cloudrun@v2
+      with:
+        service: ${{ env.SERVICE }}
+        region: ${{ env.REGION }}
+        image: "asia-southeast1-docker.pkg.dev/${{ secrets.GOOGLE_PROJECT }}/be-tracky/node:latest"
 
-    # - name: Show Output
-    #   run: echo ${{ steps.deploy.outputs.url }} 
+    - name: Show Output
+      run: echo ${{ steps.deploy.outputs.url }}
