@@ -32,13 +32,13 @@ jobs:
         docker build -t asia-southeast1-docker.pkg.dev/$GOOGLE_PROJECT/be-tracky/node:latest .
         docker push asia-southeast1-docker.pkg.dev/$GOOGLE_PROJECT/be-tracky/node:latest
 
-    - name: deploy to cloud run
-      id: deploy
-      uses: google-github-actions/deploy-cloudrun@v2
-      with:
-        service: ${{ env.SERVICE }}
-        region: ${{ env.REGION }}
-        image: "${{ secrets.GOOGLE_PROJECT }}/be-tracky/${{ env.SERVICE }}:${{ github.sha }}"
+    # - name: deploy to cloud run
+    #   id: deploy
+    #   uses: google-github-actions/deploy-cloudrun@v2
+    #   with:
+    #     service: ${{ env.SERVICE }}
+    #     region: ${{ env.REGION }}
+    #     image: "${{ secrets.GOOGLE_PROJECT }}/be-tracky/${{ env.SERVICE }}:${{ github.sha }}"
 
-    - name: Show Output
-      run: echo ${{ steps.deploy.outputs.url }} 
+    # - name: Show Output
+    #   run: echo ${{ steps.deploy.outputs.url }} 
