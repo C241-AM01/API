@@ -1,9 +1,13 @@
-name: Deploy API
+name: Build and Deploy to Cloud Run
 
 on:
   push:
     branches:
     - 'ci/github-action'
+
+env:
+  SERVICE: tracky-api
+  REGION: asia-southeast1
 
 jobs:
   deploy:
@@ -14,7 +18,7 @@ jobs:
       uses: actions/checkout@v2
 
     - name: install the gcloud cli
-      uses: google-github-actions/setup-gcloud@v0
+      uses: google-github-actions/setup-gcloud@v2
       with: 
         project_id: ${{ secrets.GOOGLE_PROJECT }}
         service_account_key: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
@@ -27,3 +31,14 @@ jobs:
         gcloud auth configure-docker asia-southeast1-docker.pkg.dev
         docker build -t asia-southeast1-docker.pkg.dev/$GOOGLE_PROJECT/be-tracky/node:latest .
         docker push asia-southeast1-docker.pkg.dev/$GOOGLE_PROJECT/be-tracky/node:latest
+
+    - name: deploy to cloud run
+      id: deploy
+      uses: google-github-actions/deploy-cloudrun@v2
+      with:
+        service: ${{ env.SERVICE }}
+        region: ${{ env.REGION }}
+        image: "${{ secrets.GOOGLE_PROJECT }}/be-tracky/${{ env.SERVICE }}:${{ github.sha }}"
+
+    - name: Show Output
+      run: echo ${{ steps.deploy.outputs.url }} 
