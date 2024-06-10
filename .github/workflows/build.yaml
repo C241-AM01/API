@@ -28,6 +28,8 @@ jobs:
       env:
         GOOGLE_PROJECT: ${{ secrets.GOOGLE_PROJECT }}
       run: |
+        echo ${GOOGLE_APPLICATION_CREDENTIALS} > ${HOME}/gcloud-service-key.json
+        gcloud auth activate-service-account --key-file=${HOME}/gcloud-service-key.json
         gcloud auth configure-docker asia-southeast1-docker.pkg.dev
         docker build -t asia-southeast1-docker.pkg.dev/$GOOGLE_PROJECT/be-tracky/node:latest .
         docker push asia-southeast1-docker.pkg.dev/$GOOGLE_PROJECT/be-tracky/node:latest
