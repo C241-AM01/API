@@ -21,19 +21,28 @@ const signup = async (req, res) => {
 
 const login = async (req, res) => {
     const { email, password } = req.body;
+    console.log("Received email:", email);
+
+    console.log("Received password:", password);
 
     try {
-        const userRecord = await admin.auth().getUserByEmail(email);
+        // Verify email and password using Firebase Auth Client SDK
+        const user = await admin.auth().getUserByEmail(email);
 
-        const customClaims = (await admin.auth().getUser(userRecord.uid)).customClaims;
+        // Additional code may be required to validate the password
+
+        // Get custom claims
+        const userRecord = await admin.auth().getUser(user.uid);
+        const customClaims = userRecord.customClaims || {};
         const role = customClaims.role;
 
-        const token = jwt.sign({ uid: userRecord.uid, email: userRecord.email, role }, SECRET_KEY, { expiresIn: '1h' });
+        // Generate JWT token
+        const token = jwt.sign({ uid: user.uid, email: user.email, role }, SECRET_KEY, { expiresIn: '1h' });
         activeTokens.add(token);
 
         res.json({ token });
     } catch (error) {
-        console.error("Error logging in user:", error);
+        console.error("Error logging in user:", error.message);
         res.status(401).json({ error: "Invalid email or password" });
     }
 };

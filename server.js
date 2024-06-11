@@ -13,6 +13,8 @@ const app = express();
 
 app.use(bodyParser.json());
 
+app.use(bodyParser.urlencoded({ extended: false }));
+
 app.use('/auth', authRoutes);
 app.use('/asset', assetRoutes);
 app.use('/tracker', trackerRoutes);
