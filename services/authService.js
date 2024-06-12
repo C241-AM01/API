@@ -28,7 +28,12 @@ const login = async (req, res) => {
         const customClaims = (await admin.auth().getUser(userRecord.uid)).customClaims;
         const role = customClaims.role;
 
-        const token = jwt.sign({ uid: userRecord.uid, email: userRecord.email, role }, SECRET_KEY, { expiresIn: '1h' });
+        let token;
+        if (role === 'tracker') {
+            token = jwt.sign({ uid: userRecord.uid, email: userRecord.email, role }, SECRET_KEY);
+        } else {
+            token = jwt.sign({ uid: userRecord.uid, email: userRecord.email, role }, SECRET_KEY, { expiresIn: '1h' });
+        }
         activeTokens.add(token);
 
         res.json({ token });
